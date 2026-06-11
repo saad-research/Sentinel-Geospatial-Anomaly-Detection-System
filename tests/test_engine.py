@@ -122,17 +122,37 @@ def test_statistical_outliers_not_empty():
 class TestAddPopulationUncertainty:
 
     def test_v2_uses_lower_upper_bounds(self):
-        """V2: PNA_conservative uses est_pincode_pop_lower (not est_pincode_pop)."""
+        """
+        V2: PNA_conservative and PNA_upper_bound use the lower/upper
+        projected population bounds, not est_pincode_pop or a flat multiplier.
+        """
         df = make_v2_dummy_df()
         result = add_population_uncertainty(df)
 
-        # PNA_conservative = TAI / pop_lower → should be HIGHER than PNA
-        # (fewer assumed residents = higher stress reading)
         assert "PNA_conservative" in result.columns
         assert "PNA_upper_bound" in result.columns
-        # PNA_conservative > PNA > PNA_upper_bound (for positive TAI and pop)
-        assert (result["PNA_conservative"] >= result["PNA"]).all()
-        assert (result["PNA"] >= result["PNA_upper_bound"]).all()
+
+        # For rows where the lower/upper columns exist and population is positive,
+        # PNA_conservative and PNA_upper_bound must be derived from those bounds.
+        mask = (df["est_pincode_pop_lower"] > 0) & (df["est_pincode_pop_upper"] > 0)
+
+        # Recompute the theoretical bounds from TAI and the lower/upper populations
+        expected_conservative = df.loc[mask, "TAI"] / df.loc[mask, "est_pincode_pop_lower"]
+        expected_upper = df.loc[mask, "TAI"] / df.loc[mask, "est_pincode_pop_upper"]
+
+        # Compare against the function output (on the same mask)
+        assert np.allclose(
+            result.loc[mask, "PNA_conservative"],
+            expected_conservative,
+            rtol=1e-6,
+            atol=0.0,
+        )
+        assert np.allclose(
+            result.loc[mask, "PNA_upper_bound"],
+            expected_upper,
+            rtol=1e-6,
+            atol=0.0,
+        )
 
     def test_v1_fallback_when_columns_absent(self):
         """V1 fallback: est_pincode_pop_lower/upper absent → flat rate multiplier."""
