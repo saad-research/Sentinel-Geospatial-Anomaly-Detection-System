@@ -1,33 +1,139 @@
-import os
-import pandas as pd
-from src import config
-from src.loader import load_and_concat_csvs, preprocess_and_aggregate
-from src.engine import calculate_base_metrics
-from src.scoring import compute_risk_score, flag_anomalies_isolation_forest, flag_anomalies_statistical, add_population_uncertainty
+"""
+pipeline.py
+══════════════════════════════════════════════════════════════════════════════
+End-to-End Pipeline Runner — Aadhaar Sentinel V2
 
-def run():
-    print("Loading data...")
-    demo_df = load_and_concat_csvs(os.path.join(config.RAW_DATA_DIR, "aadhaar_demographic_updates"))
-    bio_df = load_and_concat_csvs(os.path.join(config.RAW_DATA_DIR, "aadhaar_biometric_update_pincode"))
-    enr_df = load_and_concat_csvs(os.path.join(config.RAW_DATA_DIR, "aadhaar_enrolment_pincode"))
+Single entry point. Run with:
+    python pipeline.py
+
+V2 CHANGES:
+  - Uses build_ensemble_outliers (IF + DBSCAN) instead of standalone IF call.
+  - iso_score and anomaly_score are now saved in sentinel_final.csv (on ALL
+    PINcodes), not just in outliers_ml.csv.
+  - Saves three output CSVs instead of two:
+      sentinel_final.csv   — all PINcodes with all metrics + iso_score
+      outliers_ml.csv      — IF-flagged subset (backward-compat with app.py)
+      ensemble_final.csv   — IF-flagged subset + DBSCAN cluster labels
+      outliers_stat.csv    — statistical baseline outliers (previously unsaved)
+  - Generates HTML maps after scoring (wrapped in try/except so a missing
+    coordinates file does not abort the whole pipeline).
+  - Prints a structured summary matching the Paper B §5 result numbers.
+
+OUTPUT FILES:
+    data/processed/sentinel_final.csv
+    data/processed/outliers_ml.csv
+    data/processed/ensemble_final.csv
+    data/processed/outliers_stat.csv
+    outputs/maps/national_map.html
+    outputs/maps/audit_targets_map.html
+"""
+
+import os
+import time
+
+import pandas as pd
+
+from src import config
+from src.engine import calculate_base_metrics
+from src.loader import load_and_concat_csvs, preprocess_and_aggregate
+from src.maps import generate_all_maps
+from src.scoring import (
+    add_population_uncertainty,
+    build_ensemble_outliers,
+    compute_risk_score,
+    flag_anomalies_statistical,
+)
+
+
+def run() -> None:
+    t_start = time.time()
+
+    # ── Step 1: Load raw data ─────────────────────────────────────────────
+    print("Loading raw data...")
+    demo_df = load_and_concat_csvs(
+        os.path.join(config.RAW_DATA_DIR, "aadhaar_demographic_updates")
+    )
+    bio_df = load_and_concat_csvs(
+        os.path.join(config.RAW_DATA_DIR, "aadhaar_biometric_update_pincode")
+    )
+    enr_df = load_and_concat_csvs(
+        os.path.join(config.RAW_DATA_DIR, "aadhaar_enrolment_pincode")
+    )
     district_pop = pd.read_csv(config.CENSUS_PATH)
 
-    print("Processing...")
+    # ── Step 2: Aggregate to PINCODE level ────────────────────────────────
+    print("Aggregating to PINCODE level...")
     demo_pin, bio_pin, enr_pin = preprocess_and_aggregate(demo_df, bio_df, enr_df)
+
+    # ── Step 3: Compute TAI / DPR / DPR_v2 / PNA with RGI projections ────
+    print("Computing metrics (V2 RGI projections)...")
     base_df = calculate_base_metrics(demo_pin, bio_pin, enr_pin, district_pop)
-    
-    print("Scoring and Anomaly Detection...")
+
+    # ── Step 4: Risk scoring ──────────────────────────────────────────────
+    print("Scoring (composite risk + uncertainty bounds)...")
     scored_df = compute_risk_score(base_df)
     scored_df = add_population_uncertainty(scored_df)
-    
+
+    # ── Step 5: Anomaly detection — hierarchical IF + DBSCAN ensemble ────
+    print("Anomaly detection (IF → DBSCAN ensemble)...")
+    scored_df, if_outliers, ensemble_df, ensemble_stats = build_ensemble_outliers(scored_df)
+
+    # Step 5b: Statistical baseline (for Paper B comparison)
     outliers_stat = flag_anomalies_statistical(scored_df)
-    outliers_ml = flag_anomalies_isolation_forest(scored_df)
-    
+
+    # ── Step 6: Save outputs ──────────────────────────────────────────────
+    print("Saving results...")
     os.makedirs(config.PROCESSED_DIR, exist_ok=True)
-    scored_df.to_csv(os.path.join(config.PROCESSED_DIR, "sentinel_final.csv"), index=False)
-    outliers_ml.to_csv(os.path.join(config.PROCESSED_DIR, "outliers_ml.csv"), index=False)
-    
-    print("Pipeline complete.")
+
+    scored_df.to_csv(
+        os.path.join(config.PROCESSED_DIR, "sentinel_final.csv"), index=False
+    )
+    if_outliers.to_csv(
+        os.path.join(config.PROCESSED_DIR, "outliers_ml.csv"), index=False
+    )
+    ensemble_df.to_csv(
+        os.path.join(config.PROCESSED_DIR, "ensemble_final.csv"), index=False
+    )
+    outliers_stat.to_csv(
+        os.path.join(config.PROCESSED_DIR, "outliers_stat.csv"), index=False
+    )
+
+    # ── Step 7: Generate maps ─────────────────────────────────────────────
+    print("Generating geospatial maps...")
+    try:
+        generate_all_maps(scored_df)
+        maps_status = "Generated"
+    except Exception as e:
+        maps_status = f"Skipped ({e})"
+        print(f"  Map generation non-fatal error: {e}")
+
+    # ── Step 8: Summary ───────────────────────────────────────────────────
+    elapsed = time.time() - t_start
+
+    # Compute overlap for Paper B §5 (key validation result: ~97%)
+    stat_pins = set(outliers_stat["pincode"].astype(str))
+    ml_pins = set(if_outliers["pincode"].astype(str))
+    overlap = len(stat_pins & ml_pins)
+    overlap_pct = (overlap / ensemble_stats["if_flagged"] * 100) if ensemble_stats["if_flagged"] > 0 else 0.0
+
+    privacy_masked = int(scored_df.get("Privacy_Masked", pd.Series(False)).sum())
+
+    print(f"\n{'=' * 52}")
+    print(f"  Aadhaar Sentinel V2 — Pipeline Complete ({elapsed:.1f}s)")
+    print(f"{'=' * 52}")
+    print(f"  Total PINcodes analysed   : {len(scored_df):>10,}")
+    print(f"  Statistical flags (98th)  : {len(outliers_stat):>10,}")
+    print(f"  Isolation Forest flags    : {ensemble_stats['if_flagged']:>10,}")
+    print(f"  Method overlap            : {overlap:>10,}  ({overlap_pct:.0f}%)")
+    print(f"  DBSCAN clusters           : {ensemble_stats['dbscan_clusters']:>10,}")
+    print(f"  Clustered PINcodes        : {ensemble_stats['dbscan_clustered_pincodes']:>10,}")
+    print(f"  Isolated IF outliers      : {ensemble_stats['dbscan_isolated_outliers']:>10,}")
+    print(f"  Privacy_Masked (flagged)  : {privacy_masked:>10,}")
+    print(f"{'=' * 52}")
+    print(f"  Outputs  → {config.PROCESSED_DIR}/")
+    print(f"  Maps     → {maps_status}")
+    print(f"{'=' * 52}\n")
+
 
 if __name__ == "__main__":
     run()
