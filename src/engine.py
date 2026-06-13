@@ -186,7 +186,7 @@ def calculate_base_metrics(demo_pin, bio_pin, enr_pin, district_pop_df):
         district_stats["growth_source"].fillna("no_census_match")
     )
     district_stats["k_anonymity_flag"] = (
-        district_stats["k_anonymity_flag"].fillna(False)
+        district_stats["k_anonymity_flag"].fillna(False).astype(bool)
     )
 
     # ── Step 8: Per-PINCODE population proxy ─────────────────────────────
