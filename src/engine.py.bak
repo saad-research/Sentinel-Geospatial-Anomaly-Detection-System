@@ -61,64 +61,6 @@ logger = logging.getLogger(__name__)
 EPSILON: float = 1e-5
 
 
-
-def apply_district_reconciliation(df: pd.DataFrame, map_path: str) -> pd.DataFrame:
-    """
-    Remap UIDAI (state, district) strings to canonical Census 2011 names
-    using the reconciliation map built by scripts/build_district_map.py.
-
-    Only high-confidence rows are applied (match_method in
-    {"fuzzy_auto", "manual_override", "telangana_proxy"}). Rows flagged
-    "fuzzy_review" or "excluded_junk" are deliberately left untouched and
-    fall through to the existing three-tier population fallback below —
-    a low-confidence remap risks silently assigning the wrong district's
-    population, which is worse than an honest, logged fallback. This
-    residual set is documented as a known limitation (Paper B Limitations
-    / Paper A Data Quality section), not force-fixed.
-
-    If the map file doesn't exist, df is returned unchanged — this is an
-    enhancement layer, not a hard pipeline dependency.
-    """
-    import os
-    if not os.path.exists(map_path):
-        logger.warning(
-            "District reconciliation map not found at '%s'. "
-            "Skipping reconciliation — using raw UIDAI district/state names.",
-            map_path,
-        )
-        return df
-
-    dmap = pd.read_csv(map_path)
-    trusted_methods = {"fuzzy_auto", "manual_override", "telangana_proxy"}
-    dmap = dmap[dmap["match_method"].isin(trusted_methods)].copy()
-
-    for col in ["uidai_state", "uidai_district", "census_state", "census_district"]:
-        dmap[col] = dmap[col].astype(str).str.upper().str.strip()
-
-    dmap = dmap.drop_duplicates(subset=["uidai_state", "uidai_district"])
-    dmap = dmap.rename(columns={"uidai_state": "state", "uidai_district": "district"})
-
-    df = df.merge(
-        dmap[["state", "district", "census_state", "census_district"]],
-        on=["state", "district"],
-        how="left",
-    )
-
-    n_remapped = int(df["census_district"].notna().sum())
-
-    df["state"] = df["census_state"].fillna(df["state"])
-    df["district"] = df["census_district"].fillna(df["district"])
-    df = df.drop(columns=["census_state", "census_district"])
-
-    logger.info(
-        "District reconciliation applied: %d / %d rows remapped to "
-        "canonical Census names (trusted methods: fuzzy_auto, "
-        "manual_override, telangana_proxy).",
-        n_remapped, len(df),
-    )
-    return df
-
-
 # ── Core function (signature unchanged from V1) ───────────────────────────────
 
 def calculate_base_metrics(demo_pin, bio_pin, enr_pin, district_pop_df):
@@ -161,12 +103,6 @@ def calculate_base_metrics(demo_pin, bio_pin, enr_pin, district_pop_df):
     # but defensive re-normalization prevents silent mismatches)
     df["district"] = df["district"].astype(str).str.upper().str.strip()
     df["state"] = df["state"].astype(str).str.upper().str.strip()
-
-    # ── Step 1b: Apply district name reconciliation ───────────────────────
-    # Remaps UIDAI spelling variants to canonical Census names. See
-    # apply_district_reconciliation() docstring for what's applied vs left
-    # as a documented limitation.
-    df = apply_district_reconciliation(df, config.DISTRICT_MAP_PATH)
 
     # ── Step 2: TAI — Total Activity Index (Paper B Eq. 1) ───────────────
     # TAI_i = Enrolments_i + DemographicUpdates_i + BiometricUpdates_i
