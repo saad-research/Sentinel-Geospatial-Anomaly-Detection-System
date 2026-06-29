@@ -1,148 +1,280 @@
-# Aadhaar Sentinel
+# Aadhaar‑Sentinel
 ### Geospatial Risk Analytics for National Identity Infrastructure
 
 [![Python](https://img.shields.io/badge/Python-3.9%2B-blue?style=flat-square&logo=python)](https://python.org)
 [![Streamlit](https://img.shields.io/badge/Streamlit-Dashboard-FF4B4B?style=flat-square&logo=streamlit)](https://streamlit.io)
-[![scikit-learn](https://img.shields.io/badge/scikit--learn-IsolationForest-F7931E?style=flat-square&logo=scikit-learn)](https://scikit-learn.org)
+[![scikit-learn](https://img.shields.io/badge/scikit--learn-Anomaly_Detection-F7931E?style=flat-square&logo=scikit-learn)](https://scikit-learn.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=flat-square)]()
 
 ---
 
-> **Aadhaar Sentinel** is a dual-metric geospatial analytics framework that distinguishes between *infrastructure capacity stress* and *demographic update anomalies* across India's national identity enrollment network — transitioning audit mechanisms from reactive complaint-based selection to ML-augmented severity-based prioritization.
+> **Aadhaar‑Sentinel** is a geospatial analytics framework for India's national digital identity infrastructure.  
+> It separates *capacity stress* from *identity‑integrity anomalies* at PINCODE resolution, moving audit focus from complaint‑based selection to severity‑based prioritisation.
 
+**Status (June 2026):**
 
-## The Problem
+- Core pipeline (metrics + statistical baseline + Isolation Forest) implemented and tested.
+- District name reconciliation and PINCODE aggregation working.
+- DPR=193 Ahilyanagar anomaly verified in the reconciled pipeline.
+- Extensions in progress: Local Outlier Factor (LOF), HDBSCAN clustering, sensitivity analysis, RGI growth integration.
 
-India's Aadhaar network processes over **221 crore monthly authentication transactions** across 32,898 PINCODE-level enrollment centers. Traditional audit governance relies on complaint volume to prioritize inspections — a method that structurally fails in two ways:
+---
 
-1. **It misses Silent Anomalies** — low-volume centers processing thousands of demographic updates without corresponding biometric verification, invisible to volume-based scanners.
-2. **It cannot separate causes** — a district showing high update activity may be experiencing infrastructure overload, process irregularity, or both simultaneously. These require completely different operational responses.
+## Motivation
 
-No existing public analytics framework applies multivariate anomaly detection to distinguish between these failure modes at PINCODE resolution.
+Aadhaar is the world’s largest biometric identity infrastructure, handling billions of authentications and updates each year.[web:574] Operational dashboards are largely aggregate and volume‑based: they report enrolments, demographic updates, and biometric updates at state/district level and rank high‑volume locations for audit.
 
+This creates three problems:
+
+1. **Silent anomalies**  
+   Low‑volume centres can process hundreds of demographic updates with almost no biometric verification. They look “normal” in volume dashboards but weaken identity integrity guarantees.
+
+2. **Mixed signals**  
+   High update activity can mean genuine demand (capacity stress), process irregularity (identity risk), or both. Aggregate dashboards cannot disentangle these.
+
+3. **Outdated denominators**  
+   The 2021 Population Census was never conducted; Census 2011 is over a decade old and RGI 2011‑2036 projections are stuck in PDF form.[web:574] Most analyses still use district‑level 2011 counts, blurring capacity signals.
+
+**Aadhaar‑Sentinel** addresses these issues by:
+
+- Joining three UIDAI update streams with population denominators at PINCODE resolution.
+- Defining dual metrics for capacity stress and identity integrity lag.
+- Applying unsupervised anomaly detection over this feature space.
+- Producing a reusable benchmark dataset (**IndiaID‑Bench**) for further research.
+
+---
 
 ## What Sentinel Does Differently
 
-Most government data analytics pipelines aggregate to state or district level and rank by raw volume. Sentinel introduces three changes:
+Most government analytics stacks:
 
-| Conventional Approach | Sentinel Approach |
-|---|---|
-| Volume-based ranking | Severity-weighted composite scoring (Z-normalized) |
-| Single-metric flagging | Dual-metric separation (Capacity vs. Integrity) |
-| Percentile thresholds | Isolation Forest multivariate anomaly detection |
-| Static district maps | Interactive PINCODE-resolution geospatial dashboard |
-| Point estimates | Population uncertainty bounds (Census 2011 ± growth factor) |
+- Aggregate to state/district level.
+- Rank locations by raw volume.
+- Use one or two simple thresholds.
 
+Sentinel introduces three key changes:
 
-## Architecture
+| Conventional Approach               | Sentinel Approach                                                   |
+|-------------------------------------|---------------------------------------------------------------------|
+| Volume‑based ranking                | Severity‑weighted composite scoring (Z‑normalised)                 |
+| Single metric (volume)             | Dual metrics (Capacity vs Integrity) + composite risk              |
+| Independent thresholds per metric  | Multivariate anomaly detection (Isolation Forest; LOF planned)     |
+| Static district maps               | Interactive PINCODE‑resolution dashboard                           |
+| Point estimates from 2011 Census   | Population uncertainty bounds + planned RGI growth integration     |
 
-```
+---
+
+## Repository Architecture
+
+```text
 aadhaar-sentinel/
 ├── src/
-│   ├── config.py          # Centralised thresholds, weights, paths
-│   ├── loader.py          # Raw CSV ingestion and normalisation
-│   ├── engine.py          # Metric computation (TAI, DPR, PNA)
-│   ├── scoring.py         # Anomaly detection (statistical + Isolation Forest)
-│   └── maps.py            # Folium map generation
+│   ├── config.py      # Thresholds, weights, paths
+│   ├── loader.py      # Raw CSV ingestion and normalisation
+│   ├── engine.py      # Metric computation (TAI, DPR, PNA, etc.)
+│   ├── scoring.py     # Anomaly detection (statistical + Isolation Forest; LOF planned)
+│   └── maps.py        # Folium-based map generation
 ├── data/
-│   ├── raw/               # UIDAI source datasets (gitignored)
-│   └── processed/         # Generated CSVs
-├── outputs/maps/          # Interactive HTML maps
-├── notebooks/             # Exploratory analysis only
-├── tests/                 # Unit tests for core pipeline
-├── app.py                 # Streamlit dashboard
-├── pipeline.py            # End-to-end pipeline runner
+│   ├── raw/           # UIDAI & population source datasets (gitignored)
+│   └── processed/     # Derived features and outputs (CSV)
+├── outputs/maps/      # Interactive HTML maps
+├── notebooks/         # Exploratory analysis only
+├── tests/             # Unit tests for core pipeline
+├── app.py             # Streamlit dashboard
+├── pipeline.py        # End-to-end pipeline runner
 └── requirements.txt
 ```
 
+Design principle: **separation of concerns** — metrics, scoring, orchestration, and visualisation are cleanly separated and individually testable.
 
-## Core Metrics
+---
 
-Sentinel derives three risk indicators at the PINCODE level:
+## Core Metrics (PINCODE Level)
 
-**1. Total Activity Index (TAI)**
-```
+Sentinel derives three primary indicators for each PINCODE:
+
+### 1. Total Activity Index (TAI)
+
+```text
 TAI = Enrolments + Demographic Updates + Biometric Updates
 ```
-Measures overall operational throughput. Used to weight anomaly scores.
 
-**2. Demographic Pressure Ratio (DPR)**
-```
+- Measures overall operational throughput.
+- Used as context for other metrics and as a low‑weight component in composite scoring.
+
+### 2. Demographic‑to‑Biometric Processing Ratio (DPR)
+
+```text
 DPR = Demographic Updates / (Biometric Updates + 1)
 ```
-Process integrity proxy. A high DPR indicates demographic attribute changes (name, address, date of birth) occurring without corresponding biometric re-verification — a pattern requiring audit investigation.
 
-**3. Population-Normalised Activity (PNA)**
-```
+- **Identity integrity proxy.**
+- High DPR indicates demographic changes (name, address, date of birth, etc.) occurring without corresponding biometric re‑verification.
+- DPR=193 in Ahilyanagar (Maharashtra) means 193 demographic updates per biometric re‑verification on the analysed snapshot — a pattern that merits audit attention.
+
+### 3. Population‑Normalised Activity (PNA)
+
+```text
 PNA = TAI / Estimated PINCODE Population
 ```
-Capacity stress indicator. Values above 1.0 indicate total enrollment activity exceeding the estimated resident population — signaling extreme infrastructure demand or cross-boundary footfall.
 
-**Population Estimation:**
-Estimated PINCODE population is derived as District Population (Census 2011) ÷ number of PINKCODEs in district. To account for the age of this estimate, PNA is reported with uncertainty bounds assuming 0–20% population growth, producing `PNA_conservative` and `PNA_upper_bound` columns.
+- **Capacity stress indicator.**
+- Values significantly above 1.0 suggest total enrolment/update activity exceeding the estimated resident population (extreme demand or cross‑boundary footfall).
 
+#### Population Estimation & Uncertainty
 
-## Anomaly Detection
+- Baseline: **District population (Census 2011)** divided by number of PINCODEs in the district.
+- PNA is reported with uncertainty bounds using plausible growth factors (e.g. 0–20%) to reflect post‑2011 population change.
+- Planned: replace simple bounds with **state/district‑specific RGI 2011–2036 growth rates** once extracted.
 
-Sentinel implements and compares two detection methodologies:
+Derived columns include:
+
+- `PNA_point_estimate`
+- `PNA_conservative` (lower growth assumption)
+- `PNA_upper_bound` (higher growth assumption)
+
+---
+
+## Anomaly Detection Framework
+
+Sentinel currently implements two detection methods and is designed to host a third:
 
 ### Method 1 — Statistical Baseline (Percentile Thresholding)
-PINKCODEs exceeding the **98th percentile** on any of TAI, DPR, or PNA are flagged. This is interpretable and reproducible but treats each metric independently and cannot capture multivariate anomaly structure.
 
-### Method 2 — Isolation Forest (Primary)
-An `IsolationForest` model (scikit-learn) is trained on the joint feature space `(TAI, DPR, PNA)` with `contamination=0.02`, mirroring the 98th percentile baseline for direct comparison. Isolation Forest identifies anomalies by measuring how quickly a point can be *isolated* via random feature splits — points that require fewer splits are structural outliers in the multivariate space.
+- PINCODEs exceeding the **98th percentile** on any of:
+  - TAI,
+  - DPR,
+  - or PNA
+  are flagged as univariate outliers.
+- Advantages:
+  - Simple, interpretable,
+  - Easy to reproduce and explain to non‑technical stakeholders.
+- Limitation:
+  - Treats each metric independently; cannot capture multivariate anomaly structure.
+
+### Method 2 — Isolation Forest (Primary Multivariate Detector)
+
+A `sklearn.ensemble.IsolationForest` model is trained on the joint feature space:
 
 ```python
-model = IsolationForest(n_estimators=200, contamination=0.02, random_state=42)
-df["anomaly_score"] = model.fit_predict(X)   # -1 = anomaly
-df["iso_score"]     = model.decision_function(X)  # Raw isolation score
+X = df[["TAI", "DPR", "PNA"]].values
+model = IsolationForest(
+    n_estimators=200,
+    contamination=0.02,  # ~2% anomalies, mirroring the 98th percentile
+    random_state=42,
+)
+df["if_flag"]    = (model.fit_predict(X) == -1)  # True = anomaly
+df["iso_score"]  = model.decision_function(X)    # Continuous isolation score
 ```
 
-The raw `iso_score` is retained for continuous ranking — a point with iso_score = -0.3 is a stronger anomaly than one at -0.05, enabling prioritization within the flagged set.
+- The binary flag (`if_flag`) provides a clear anomaly signal.
+- The `iso_score` enables **ranking within anomalies**: more negative scores are stronger anomalies.
+- This supports severity‑based audit queues rather than “all flags equal”.
 
-### Composite Risk Scoring
-Final audit priority is determined by a Z-score normalised weighted composite:
+### Planned Method 3 — Local Outlier Factor (LOF) & HDBSCAN
 
-```python
-audit_priority_score = (dpr_z × 0.50) + (pna_z × 0.35) + (activity_z × 0.15)
+To strengthen robustness and provide richer structure:
+
+- **Local Outlier Factor (LOF)**  
+  Density‑based anomaly detection to capture local neighbourhood deviations in the same feature space.
+
+- **HDBSCAN‑based clustering**  
+  Hierarchical density‑based clustering over `(TAI, DPR, PNA)` and spatial coordinates to detect **coordinated multi‑PINCODE anomaly regions**.
+
+- **Sensitivity analysis**  
+  Systematic sweeps over:
+  - Isolation Forest contamination rates,
+  - LOF neighbourhood sizes,
+  - composite risk weights,  
+  to quantify stability of the top‑k audit list.
+
+These are part of the planned methods expansion and will be integrated into `src/scoring.py` and analysis notebooks.
+
+### Composite Risk Score
+
+Sentinel also computes a Z‑score normalised composite for audit prioritisation:
+
+```text
+audit_priority_score = 0.50 * Z(DPR) + 0.35 * Z(PNA) + 0.15 * Z(TAI)
 ```
 
-Weights are documented in `src/config.py` and justified by audit logic: DPR anomalies represent process non-compliance (highest audit urgency), PNA anomalies represent infrastructure stress (operational response), and TAI represents overall load context.
+- DPR anomalies => potential **process non‑compliance** (highest urgency).
+- PNA anomalies => **capacity stress** (operational response).
+- TAI => overall load context.
 
+Weights are configurable via `src/config.py` and can be tuned in sensitivity analysis.
 
-## Key Findings
+---
 
-Analysis of **4.9 million PINCODE-level transactions** across **33,304 PINCODE locations** identified five risk patterns:
+## Key Findings (Example Snapshot)
 
-| Risk Category | Location | Key Metric | Finding |
-|---|---|---|---|
-| **Critical Dual Risk** | West Delhi | PNA: 6.1, DPR: 12.2 | Operating at ~610% estimated capacity; elevated demographic anomaly rate masks irregular update patterns |
-| **Critical Dual Risk** | North East Delhi | PNA: 5.4, DPR: 1.6 | 537% capacity overload; requires structural kit reallocation |
-| **High-DPR Anomaly Cluster** | Ahilyanagar | DPR: 193.0, PNA: 0.006 | 193 demographic updates per biometric scan; negligible load suggests targeted process irregularity |
-| **Capacity Deficit** | Moradabad | PNA: 6.3, DPR: 1.3 | Highest capacity deficit nationally; near-normal DPR isolates this as infrastructure, not integrity |
-| **Border Corridor Anomaly** | Sribhumi (Assam) | DPR: 77.0 | High demographic churn in northeastern border corridor; consistent with elevated residency-status adjustments |
+On one national snapshot (millions of update records aggregated to ~33,000 PINCODEs), Sentinel surfaced several patterns:
 
-> **Methodological Note:** High DPR is classified as a *process anomaly requiring audit investigation*, not as evidence of fraud. Ground-truth labeling is required to distinguish between operator error, data entry patterns, and intentional irregularity.
+| Risk Category           | Location              | Key Metric(s)              | Interpretation                                                  |
+|-------------------------|-----------------------|----------------------------|-----------------------------------------------------------------|
+| **Critical Dual Risk**  | West Delhi            | PNA ≫ 1, DPR elevated      | Operating at several times estimated capacity; integrity risk. |
+| **Critical Dual Risk**  | North East Delhi      | High PNA, moderate DPR     | Severe capacity overload; demands kit reallocation.            |
+| **High‑DPR Cluster**    | Ahilyanagar (MH)      | DPR ≈ 193, low PNA         | Extreme identity‑lag pattern at low volume; process anomaly.   |
+| **Capacity Deficit**    | Moradabad             | High PNA, near‑normal DPR  | Infrastructure stress independent of integrity concerns.       |
+| **Border Corridor**     | Sribhumi (Assam)      | DPR ≫ regional baseline    | High demographic churn; plausible residency‑status dynamics.   |
 
-**Detection method validation:** Isolation Forest flagged 667 multivariate anomalies; 647 (97%) were independently confirmed by the statistical baseline, forming a high-confidence audit target set. Statistical thresholding flagged 1,702 univariate outliers — the 1,055 unique to the statistical method represent single-metric extremes without multivariate anomaly structure.
+> **Important:** High DPR is classified as a *process anomaly requiring audit investigation*, **not** as evidence of fraud. Ground‑truth audit outcomes are required to distinguish operator error, data entry patterns, and intentional irregularity.
 
-**Severity-weighted scoring surfaced findings invisible to volume-based auditing:** Ahilyanagar (DPR: 193) would not appear in a top-20 complaint-volume audit. Mahabubabad showed extreme deviation despite negligible total volume. Tier-2/3 cities are systematically underweighted by conventional methods.
+In validation:
 
-## Dashboard
+- Isolation Forest flagged a smaller, high‑confidence multivariate anomaly set.
+- A large fraction of these IF anomalies were independently flagged by the statistical baseline, indicating strong overlap between simple thresholds and multivariate structure.
+- Statistical thresholding flagged additional single‑metric extremes that do not exhibit multivariate behaviour and can be reviewed separately.
 
-An interactive Streamlit dashboard provides four decision-support views:
+Exact counts will vary between runs; refer to `data/processed/` for current totals.
 
-- **Capacity Planning** — district-level PNA rankings, top-10 bar chart
-- **Integrity Review** — high-DPR PINCODE drill-down with update breakdown
-- **Risk Composition** — classification of flagged PINKCODEs by risk type,
-  plus detection method comparison (Statistical vs Isolation Forest)
-- **Methodology** — full metric definitions, limitations, and epistemic caveats
+---
 
-Geospatial outputs (national surveillance map and top-20 audit targets map)
-are generated as interactive HTML files in `outputs/maps/` by `pipeline.py`.
+## IndiaID‑Bench (Dataset)
+
+The pipeline produces an ML‑ready benchmark dataset, **IndiaID‑Bench**, designed for:
+
+- Demographic and public policy analysis (under‑enrolment vs capacity).
+- Benchmarking unsupervised anomaly detectors on real government data.
+- AI governance and digital identity audit research.
+
+**Dataset contents (planned):**
+
+- PINCODE‑level features:
+  - `TAI`, `DPR`, `DPR_v2`, `PNA`, uncertainty bounds.
+  - `audit_priority_score`, `if_flag`, `iso_score`, future `lof_flag`, cluster labels.
+- District metadata:
+  - Reconciled district names and state codes.
+  - Population denominators and growth source tags (Census vs RGI).
+- Privacy & masking:
+  - Flags for k‑anonymity / minimum population.
+  - No individual‑level or personally identifiable data.
+
+A public, DOI‑backed release is planned once reconciliation, RGI integration, and masking are finalised.
+
+---
+
+## Streamlit Dashboard
+
+An interactive Streamlit app (`app.py`) provides four main views:
+
+- **Capacity Planning**  
+  District‑level PNA rankings; top‑N charts for infrastructure planning.
+
+- **Integrity Review**  
+  High‑DPR PINCODE drill‑downs with breakdown by update type.
+
+- **Risk Composition**  
+  Classification of flagged PINCODEs by risk type and detector (statistical vs Isolation Forest; LOF later).
+
+- **Methodology**  
+  Metric definitions, caveats, and limitations.
+
+Geospatial outputs (e.g., national risk map, top‑k audit map) are generated as interactive HTML files in `outputs/maps/` via `pipeline.py`.
 
 **Run locally:**
+
 ```bash
 # 1. Generate processed data
 python pipeline.py
@@ -151,10 +283,11 @@ python pipeline.py
 streamlit run app.py
 ```
 
+---
 
 ## Quick Start
 
-**Requirements:** Python 3.9+, Jupyter (optional, for notebooks)
+**Requirements:** Python 3.9+, optional Jupyter for notebooks.
 
 ```bash
 # Clone the repository
@@ -166,7 +299,7 @@ pip install -r requirements.txt
 
 # Place UIDAI CSV folders in data/raw/
 # Place district population CSV in data/raw/Census_2011.csv
-# (Source: india-districts-census-2011 dataset, columns: 'District name', 'State name', 'Population')
+#   (e.g., india-districts-census-2011; columns: 'District name', 'State name', 'Population')
 
 # Run the full pipeline
 python pipeline.py
@@ -178,70 +311,85 @@ streamlit run app.py
 python -m pytest tests/ -v
 ```
 
+---
 
 ## Data Sources
 
-| Dataset | Source | Granularity |
-|---|---|---|
-| Aadhaar Enrolment Data | UIDAI Open Data Portal | PINCODE × Quarter |
-| Demographic Update Data | UIDAI Open Data Portal | PINCODE × Quarter |
-| Biometric Update Data | UIDAI Open Data Portal | PINCODE × Quarter |
-| District Population | Census of India 2011 | District |
-| District Coordinates | Public GitHub (Saravanan Suriya) | District centroid |
+| Dataset                  | Source                     | Granularity         |
+|--------------------------|----------------------------|---------------------|
+| Aadhaar Enrolment Data   | UIDAI Open Data Portal     | PINCODE × Period    |
+| Demographic Update Data  | UIDAI Open Data Portal     | PINCODE × Period    |
+| Biometric Update Data    | UIDAI Open Data Portal     | PINCODE × Period    |
+| District Population      | Census of India 2011       | District            |
+| Growth Projections (WIP) | RGI 2011–2036 PDF          | State / District    |
+| District Coordinates     | Public GitHub (centroids)  | District            |
 
-All analysis is performed on aggregated, non-personal data. No Aadhaar numbers, biometric templates, or individual records are processed at any stage.
+All analysis uses **aggregated, non‑personal** data at PINCODE or district level. No Aadhaar numbers, biometric templates, or individual records are processed.
 
+---
 
 ## Privacy & Ethical Considerations
 
-This project processes only **publicly available, aggregated government data** at PINCODE or district level. No Personally Identifiable Information is used or derivable from the outputs.
+- Only public, aggregated government data is used.
+- No Personally Identifiable Information (PII) is ingested or derivable.
+- Findings are **signals for audit and governance**, not adjudications of misconduct.
 
-**Epistemic constraints acknowledged:**
-- Population estimates use 2011 Census data; PNA values for high-growth urban districts carry ~20% uncertainty
-- DPR anomalies indicate statistical deviation from regional norms, not confirmed irregularity
-- Ground-truth audit outcomes would be required to validate detection precision
+Constraints acknowledged:
 
+- Population denominators from Census 2011 introduce uncertainty, especially in high‑growth urban districts.
+- DPR anomalies reflect statistical deviation from regional norms, not confirmed irregularity.
+- Ground‑truth audit outcomes are needed to formally evaluate precision/recall of detection methods.
 
-## Limitations & Future Work
+---
+
+## Limitations & Roadmap
 
 **Current limitations:**
-- Temporal data not yet available; all analysis is cross-sectional (single snapshot)
-- Census 2011 population estimates introduce systematic PNA uncertainty in high-growth urban areas
-- Isolation Forest operates without labeled anomaly data; precision/recall cannot be formally evaluated without audit ground truth
+
+- Cross‑sectional analysis (single snapshot); temporal patterns not yet modelled.
+- RGI growth rates not fully integrated; PNA uses approximate growth bounds.
+- Unsupervised detectors operate without labelled anomalies; evaluation is overlap‑ and plausibility‑based.
 
 **Planned extensions:**
-- Time-series anomaly detection on quarterly transaction data (Prophet / LSTM)
-- DBSCAN geographic clustering to detect coordinated multi-PINCODE anomaly patterns
-- Sensitivity analysis: ablation study comparing Isolation Forest vs. Local Outlier Factor vs. DBSCAN
-- Integration with UIDAI's official population registry APIs to replace Census proxy
+
+- Time‑series anomaly detection on quarterly update streams.
+- LOF as complementary detector to Isolation Forest.
+- HDBSCAN clustering for geospatial anomaly regions.
+- Sensitivity analysis over detector parameters and composite weights.
+- Full integration of state/district‑level RGI growth rates.
+- Improved mapping and EDA for IndiaID‑Bench.
+
+---
 
 ## Tech Stack
 
-| Component | Technology |
-|---|---|
-| Data Engineering | Python, Pandas, NumPy |
-| Anomaly Detection | scikit-learn (Isolation Forest) |
-| Statistical Analysis | SciPy (Z-score normalisation) |
-| Geospatial Visualisation | Folium, HeatMap plugin |
-| Interactive Dashboard | Streamlit |
-| Testing | pytest |
-| Version Control | Git |
+| Component              | Technology                    |
+|------------------------|-------------------------------|
+| Data Engineering       | Python, Pandas, NumPy         |
+| Anomaly Detection      | scikit‑learn (IsolationForest; LOF planned) |
+| Statistics             | SciPy (Z‑score normalisation) |
+| Geospatial Visuals     | Folium, plugins               |
+| Interactive Dashboard  | Streamlit                     |
+| Testing                | pytest                        |
+| Version Control        | Git                           |
 
+---
 
 ## Project Structure Rationale
 
-The codebase is organised around separation of concerns:
+- **`src/config.py`** — single source of truth for thresholds, weights, paths; no magic numbers in pipeline code.
+- **`src/engine.py`** — pure metric computation; no anomaly logic.
+- **`src/scoring.py`** — anomaly detection and composite scoring; easy to test and extend.
+- **`pipeline.py`** — orchestration; regenerates all processed data in one command.  
+- **`app.py`** — read‑only dashboard; never mutates underlying data.
 
-- **`src/config.py`** — all tunable parameters (thresholds, weights, paths) in one place; no magic numbers in pipeline code
-- **`src/engine.py`** — pure metric calculation with no scoring logic
-- **`src/scoring.py`** — anomaly detection and composite scoring as a separate, testable module
-- **`pipeline.py`** — single entry point to regenerate all processed data; `app.py` only reads, never transforms
-
+---
 
 ## Acknowledgements
 
-Population estimation methodology uses Census of India 2011 district statistics as a scalable proxy for PINCODE-level population. This approach is appropriate for policy-level prototyping and capacity simulation; production deployment would require official UIDAI or state civil registry data.
+Population estimation currently uses Census of India 2011 district statistics as a scalable proxy for PINCODE‑level population. This is suitable for research and prototyping; production deployment in a government context would require official registry denominators and policy review.
 
+---
 
 ## License
 
@@ -249,4 +397,4 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
-*Built as part of applied research in privacy-preserving analytics and AI security.*
+*Built as part of applied research in privacy‑preserving analytics and AI security.*
