@@ -1,13 +1,14 @@
 # Ignore huge datasets
-*.csv
 *.zip
 
 # Ignore Mac/Windows system files
 .DS_Store
 Thumbs.db
 
-# Data
-data/raw/
+# Data (bulk sources untracked; small derived reference tables allowed)
+data/raw/*
+!data/raw/RGI_growth_rates.csv
+!data/raw/district_name_map.csv
 data/processed/
 
 # Colab artifacts
@@ -20,4 +21,5 @@ outputs/maps/*.html
 # Python
 __pycache__/
 *.pyc
-.env*.bak
+.env
+*.bak
