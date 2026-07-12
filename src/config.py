@@ -74,3 +74,8 @@ NATIONAL_FALLBACK_RATE = 0.012
 K_ANONYMITY_THRESHOLD = 500
 # District name reconciliation map (built by scripts/build_district_map.py)
 DISTRICT_MAP_PATH = "data/raw/district_name_map.csv"
+
+# Small UTs whose RGI Mathematical-Method projections exceed normal
+# plausibility bounds (migration-driven; see RGI 2011-2036 report, Table 8).
+# Rates are retained as published; validation reports them separately.
+RGI_HIGH_GROWTH_UTS = {"DAMAN & DIU", "DADRA & NAGAR HAVELI", "PUDUCHERRY"}

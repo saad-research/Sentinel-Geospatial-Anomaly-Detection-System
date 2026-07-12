@@ -11,6 +11,7 @@ Run:
     pytest tests/test_projections.py -v
 """
 
+import logging
 import sys
 from pathlib import Path
 
@@ -21,7 +22,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.projections import build_projected_population, load_rgi_csv
-from src.config import K_ANONYMITY_THRESHOLD
+from src.config import K_ANONYMITY_THRESHOLD, RGI_HIGH_GROWTH_UTS
 
 # ── Fixtures ──────────────────────────────────────────────────────────────────
 # NOTE: projections.py uppercases district/state internally, so fixtures can
@@ -254,3 +255,119 @@ class TestLoadRgiCsv:
         result = load_rgi_csv(str(path))
         assert result is not None
         assert "annual_growth_rate" in result.columns
+
+
+# ── Tests: RGI_HIGH_GROWTH_UTS (known high-growth UTs, no capping) ──────────
+
+class TestRgiHighGrowthUTs:
+    """
+    Daman & Diu, Dadra & Nagar Haveli, and Puducherry have genuine RGI
+    Mathematical-Method rates outside the normal plausibility bounds
+    (migration-driven, RGI 2011-2036 Table 8). Rates are NOT capped;
+    validation reclassifies them from "warning" to "expected, see
+    config.RGI_HIGH_GROWTH_UTS" instead of silently dropping the signal.
+    """
+
+    # -- load_rgi_csv: the raw >5%/yr percentage-vs-decimal sanity check -----
+
+    def test_whitelisted_state_does_not_trigger_extreme_rate_warning(self, tmp_path, caplog):
+        path = tmp_path / "rgi_whitelisted.csv"
+        pd.DataFrame({
+            "state": ["Daman & Diu"],
+            "annual_growth_rate": [0.073591],  # published RGI rate, > 5%/yr
+        }).to_csv(path, index=False)
+
+        caplog.set_level(logging.INFO, logger="src.projections")
+        result = load_rgi_csv(str(path))
+
+        assert result is not None
+        assert "> 5%/yr" not in caplog.text
+        assert "high-growth UT" in caplog.text
+        assert "DAMAN & DIU" in caplog.text
+
+    def test_non_whitelisted_state_still_triggers_extreme_rate_warning(self, tmp_path, caplog):
+        path = tmp_path / "rgi_not_whitelisted.csv"
+        pd.DataFrame({
+            "state": ["Test State"],
+            "annual_growth_rate": [0.09],  # implausible for any real state -> should warn
+        }).to_csv(path, index=False)
+
+        caplog.set_level(logging.INFO, logger="src.projections")
+        result = load_rgi_csv(str(path))
+
+        assert result is not None
+        assert "> 5%/yr" in caplog.text
+        assert "TEST STATE" in caplog.text
+
+    # -- _validate_projections (via build_projected_population): the -------
+    # -- district-level 15-year growth-factor plausibility check -----------
+
+    def test_whitelisted_state_does_not_trigger_growth_factor_warning(self, caplog):
+        census = pd.DataFrame({
+            "district":   ["DAMAN"],
+            "state":      ["DAMAN & DIU"],
+            "Population": [191_173],
+        })
+        rgi = pd.DataFrame({
+            "state":              ["DAMAN & DIU"],
+            "annual_growth_rate": [0.073591],
+        })
+
+        caplog.set_level(logging.INFO, logger="src.projections")
+        build_projected_population(census, rgi)
+
+        assert "implausible" not in caplog.text
+        assert "high-growth UT" in caplog.text
+        assert "DAMAN & DIU" in caplog.text
+
+    def test_non_whitelisted_extreme_state_still_triggers_growth_factor_warning(self, caplog):
+        census = pd.DataFrame({
+            "district":   ["SOME DISTRICT"],
+            "state":      ["TEST STATE"],
+            "Population": [100_000],
+        })
+        rgi = pd.DataFrame({
+            "state":              ["TEST STATE"],
+            "annual_growth_rate": [0.07],  # not in RGI_HIGH_GROWTH_UTS -> must still warn
+        })
+
+        caplog.set_level(logging.INFO, logger="src.projections")
+        build_projected_population(census, rgi)
+
+        assert "implausible" in caplog.text
+        assert "TEST STATE" in caplog.text
+
+    # -- No capping side effect ----------------------------------------------
+
+    def test_whitelisted_state_projection_uses_published_rate_uncapped(self):
+        """Projected_2026 for a whitelisted state must equal the raw compound
+        growth formula applied to the published rate -- no clamping to the
+        0.85-1.40 plausibility band."""
+        census = pd.DataFrame({
+            "district":   ["DAMAN"],
+            "state":      ["DAMAN & DIU"],
+            "Population": [191_173],
+        })
+        rate = 0.073591
+        rgi = pd.DataFrame({
+            "state":              ["DAMAN & DIU"],
+            "annual_growth_rate": [rate],
+        })
+        result = build_projected_population(census, rgi)
+
+        from src import config
+        years = config.TARGET_YEAR - config.BASE_YEAR
+        expected = round(191_173 * (1 + rate) ** years)
+        assert result.iloc[0]["Projected_2026"] == expected
+
+        # Sanity check: this value is genuinely outside the plausible bound --
+        # confirms the assertion above is exercising the uncapped path, not
+        # coincidentally matching a capped value.
+        growth_factor = expected / 191_173
+        assert growth_factor > 1.40
+
+    def test_whitelist_matches_config_constant(self):
+        """Guards against the whitelist silently drifting from config.py."""
+        assert RGI_HIGH_GROWTH_UTS == {
+            "DAMAN & DIU", "DADRA & NAGAR HAVELI", "PUDUCHERRY",
+        }

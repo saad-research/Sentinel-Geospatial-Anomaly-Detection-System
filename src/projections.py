@@ -115,13 +115,23 @@ def load_rgi_csv(rgi_path: str) -> Optional[pd.DataFrame]:
 
     # Catch common mistake: rates entered as percentages (1.4) not decimals (0.014)
     extreme = df["annual_growth_rate"].abs() > 0.05
-    if extreme.any():
+    known_high_growth = extreme & df["state"].isin(config.RGI_HIGH_GROWTH_UTS)
+    unexplained_extreme = extreme & ~known_high_growth
+
+    if unexplained_extreme.any():
         logger.warning(
             "%d RGI rows have |annual_growth_rate| > 5%%/yr. "
             "Verify values are decimal fractions (0.014), not percentages (1.4). "
             "Affected states: %s",
-            int(extreme.sum()),
-            df.loc[extreme, "state"].unique().tolist(),
+            int(unexplained_extreme.sum()),
+            df.loc[unexplained_extreme, "state"].unique().tolist(),
+        )
+    if known_high_growth.any():
+        logger.info(
+            "%d high-growth UTs using published RGI rates outside standard bounds "
+            "(expected, see config.RGI_HIGH_GROWTH_UTS): %s",
+            df.loc[known_high_growth, "state"].nunique(),
+            sorted(df.loc[known_high_growth, "state"].unique().tolist()),
         )
 
     logger.info("RGI data loaded: %d rows from '%s'", len(df), rgi_path)
@@ -313,15 +323,27 @@ def _validate_projections(df: pd.DataFrame, proj_col: str, years: int) -> None:
     # Check growth factors are in a plausible range for Indian districts
     growth_factor = df[proj_col] / df[config.POPULATION_COLUMN]
     out_of_range = df[(growth_factor < _MIN_GROWTH_FACTOR) | (growth_factor > _MAX_GROWTH_FACTOR)]
-    if len(out_of_range):
+
+    is_known_high_growth = out_of_range["state"].isin(config.RGI_HIGH_GROWTH_UTS)
+    known_high_growth = out_of_range[is_known_high_growth]
+    unexplained = out_of_range[~is_known_high_growth]
+
+    if len(unexplained):
         logger.warning(
             "VALIDATION: %d districts have implausible %d-year growth factor "
             "(outside %.2f–%.2f). Top cases:\n%s",
-            len(out_of_range),
+            len(unexplained),
             years,
             _MIN_GROWTH_FACTOR,
             _MAX_GROWTH_FACTOR,
-            out_of_range[["district", "state", proj_col]].head(5).to_string(index=False),
+            unexplained[["district", "state", proj_col]].head(5).to_string(index=False),
+        )
+    if len(known_high_growth):
+        logger.info(
+            "%d high-growth UTs using published RGI rates outside standard bounds "
+            "(expected, see config.RGI_HIGH_GROWTH_UTS): %s",
+            known_high_growth["state"].nunique(),
+            sorted(known_high_growth["state"].unique().tolist()),
         )
 
     # National aggregate growth check
@@ -331,10 +353,10 @@ def _validate_projections(df: pd.DataFrame, proj_col: str, years: int) -> None:
     target = int(proj_col.split("_")[1])
 
     logger.info(
-        "VALIDATION: National population 2011 → %d: %,.0f → %,.0f (Δ = +%.1f%%)",
+        "VALIDATION: National population 2011 → %d: %s → %s (Δ = +%.1f%%)",
         target,
-        total_2011,
-        total_proj,
+        f"{total_2011:,.0f}",
+        f"{total_proj:,.0f}",
         national_pct,
     )
 
