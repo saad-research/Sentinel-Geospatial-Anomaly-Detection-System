@@ -112,10 +112,13 @@ def run() -> None:
     # ── Step 8: Summary ───────────────────────────────────────────────────
     elapsed = time.time() - t_start
 
-    # Statistical vs IF overlap (Paper B §5 baseline vs Method 2)
-    stat_pins = set(outliers_stat["pincode"].astype(str))
-    ml_pins = set(if_outliers["pincode"].astype(str))
-    overlap_stat_if = len(stat_pins & ml_pins)
+    # Statistical vs IF overlap (Paper B §5 baseline vs Method 2) -- row-level,
+    # not pincode-set: flag_anomalies_statistical selects rows from scored_df
+    # by boolean mask, and if_outliers is likewise a mask-selected subset of
+    # the same scored_df, so both preserve the original pandas index and are
+    # directly comparable without re-deriving pincode as a merge key (pincode
+    # is not unique -- the same pincode can span multiple districts).
+    overlap_stat_if = len(outliers_stat.index.intersection(if_outliers.index))
     overlap_stat_if_pct = (
         overlap_stat_if / ensemble_stats["if_flagged"] * 100
         if ensemble_stats["if_flagged"] > 0
@@ -133,7 +136,7 @@ def run() -> None:
     privacy_masked = int(scored_df.get("Privacy_Masked", pd.Series(False)).sum())
 
     print(f"\n{'=' * 52}")
-    print(f"  Aadhaar Sentinel V2.1 — Pipeline Complete ({elapsed:.1f}s)")
+    print(f"  Aadhaar Sentinel V2.2 — Pipeline Complete ({elapsed:.1f}s)")
     print(f"{'=' * 52}")
     print(f"  Total PINcodes analysed   : {len(scored_df):>10,}")
     print(f"  Statistical flags (98th)  : {len(outliers_stat):>10,}")
