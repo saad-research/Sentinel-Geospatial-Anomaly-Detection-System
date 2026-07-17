@@ -263,19 +263,28 @@ def fig3_flag_overlap(sf: pd.DataFrame, stat_csv: pd.DataFrame) -> None:
         "Stat only":             (-0.65, 0.0),
         "IF (outside LOF)":      (0.05, 0.35),
         "IF∩LOF":                (0.95, 0.30),
-        "Stat∩LOF (outside IF)": (1.05, -0.38),
+        # Geometric centroid of the Stat & LOF & ~IF region (computed by
+        # sampling the actual circle equations, not eyeballed) -- the lens
+        # is narrow (x in [0.99, 1.25]) so off-centroid placement lands the
+        # label right on the IF boundary stroke.
+        "Stat∩LOF (outside IF)": (1.14, 0.0),
         "LOF only":              (1.95, 0.15),
     }
     for key, (x, y) in count_pos.items():
         ax.text(x, y, str(euler[key]), fontsize=6.5, ha="center", va="center",
                fontweight="bold")
 
-    set_label_pos = {"Stat": (-0.85, 1.35), "IF": (0.4, -0.85), "LOF": (2.35, 0.0)}
+    set_label_pos = {"Stat": (-0.85, 1.35), "IF": (0.4, -0.85)}
     for key, (x, y) in set_label_pos.items():
         ax.text(x, y, f"{key} (n={sizes[key]:,})", fontsize=6.5, ha="center",
                color=colors[key], fontweight="bold")
+    # LOF label: left-anchored just past the circle's right edge (2.26) so
+    # the text extends rightward, away from the circle, instead of a
+    # center-anchored label whose left half bled back into the circle.
+    ax.text(2.32, 0.0, f"LOF (n={sizes['LOF']:,})", fontsize=6.5, ha="left",
+           va="center", color=colors["LOF"], fontweight="bold")
 
-    ax.set_xlim(-1.7, 2.9)
+    ax.set_xlim(-1.7, 3.6)
     ax.set_ylim(-1.6, 1.8)
     ax.set_aspect("equal")
     ax.axis("off")
@@ -290,15 +299,14 @@ def fig3_flag_overlap(sf: pd.DataFrame, stat_csv: pd.DataFrame) -> None:
 
 def fig4_sensitivity(sens: pd.DataFrame) -> None:
     print("\n--- fig4_sensitivity ---")
-    fig, axes = plt.subplots(1, 3, figsize=(DOUBLE_COL, 2.5), sharey=True)
+    # Single-column in the paper now (\columnwidth) -- 3 panels at 3.5in total.
+    fig, axes = plt.subplots(1, 3, figsize=(SINGLE_COL, 2.3), sharey=True)
     panels = [
         ("IF contamination", "IF contamination", "(a)"),
         ("LOF n_neighbors", "LOF n_neighbors", "(b)"),
         ("DPR weight", "DPR weight", "(c)"),
     ]
     for (sweep_name, xlabel, tag), ax in zip(panels, axes):
-        ax.text(0.03, 0.97, tag, transform=ax.transAxes, fontsize=8,
-               fontweight="bold", ha="left", va="top")
         sub = sens[sens["sweep"] == sweep_name].sort_values("value")
         if not len(sub):
             print(f"WARNING: no rows for sweep={sweep_name!r}")
@@ -320,6 +328,19 @@ def fig4_sensitivity(sens: pd.DataFrame) -> None:
         ax.set_ylim(0, 1.05)
 
     axes[0].set_ylabel("Jaccard similarity (top-20 vs. baseline)")
+
+    # Panel tags below each panel, centered under its x-axis label. A fixed
+    # axes-fraction offset doesn't reliably clear the xlabel across figure
+    # sizes, so measure each axes' actual rendered extent (tick labels +
+    # xlabel included) via get_tightbbox and place the tag a small, fixed
+    # gap below that -- in figure-fraction coordinates, not axes-fraction.
+    renderer = fig._get_renderer()
+    for (_, _, tag), ax in zip(panels, axes):
+        bbox_fig = ax.get_tightbbox(renderer).transformed(fig.transFigure.inverted())
+        x_center = sum(ax.get_position().intervalx) / 2
+        fig.text(x_center, bbox_fig.y0 - 0.03, tag, fontsize=8,
+                 fontweight="bold", ha="center", va="top")
+
     out = OUT_DIR / "fig4_sensitivity.pdf"
     fig.savefig(out)
     plt.close(fig)
@@ -375,19 +396,27 @@ def fig5_rgi_shift(sf: pd.DataFrame) -> None:
     ax.set_ylabel("PINcodes (count, log scale)")
 
     markers = [
-        (mean_f, OI["black"], f"mean={mean_f:.2f}", 0.55),
-        (lowest_f, OI["green"], f"{lowest_state.title()}={lowest_f:.2f}", 0.30),
-        (delhi_f, OI["purple"], f"Delhi={delhi_f:.2f}", 0.75),
+        (mean_f, OI["black"], f"mean={mean_f:.2f}"),
+        (lowest_f, OI["green"], f"{lowest_state.title()}={lowest_f:.2f}"),
+        (delhi_f, OI["purple"], f"Delhi={delhi_f:.2f}"),
     ]
     for name, fval in ut_f.items():
-        markers.append((float(fval), OI["vermillion"], f"{name.title()}={fval:.2f}", 0.75))
+        markers.append((float(fval), OI["vermillion"], f"{name.title()}={fval:.2f}"))
+
+    # mean/Odisha/Delhi/Puducherry all sit within f in [1.0, 1.45] -- sort by
+    # x-position and alternate top/bottom vertical anchors so any two labels
+    # adjacent in x land in different vertical bands instead of colliding.
+    markers.sort(key=lambda m: m[0])
+    y_fracs = [0.82, 0.22]
 
     ymin, ymax = ax.get_ylim()
-    for fval, color, label, y_frac in markers:
+    for i, (fval, color, label) in enumerate(markers):
         ax.axvline(fval, color=color, linestyle="--", linewidth=0.8)
+        y_frac = y_fracs[i % 2]
+        va = "top" if y_frac > 0.5 else "bottom"
         y = ymin * (ymax / ymin) ** y_frac
         ax.text(fval, y, label, rotation=90, fontsize=5.5, color=color,
-               ha="right", va="top")
+               ha="right", va=va)
 
     out = OUT_DIR / "fig5_rgi_shift.pdf"
     fig.savefig(out)
