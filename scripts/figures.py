@@ -299,13 +299,29 @@ def fig3_flag_overlap(sf: pd.DataFrame, stat_csv: pd.DataFrame) -> None:
 
 def fig4_sensitivity(sens: pd.DataFrame) -> None:
     print("\n--- fig4_sensitivity ---")
-    # Single-column in the paper now (\columnwidth) -- 3 panels at 3.5in total.
-    fig, axes = plt.subplots(1, 3, figsize=(SINGLE_COL, 2.3), sharey=True)
+    # 3 panels stacked vertically, single column. The earlier 3-across layout
+    # at 3.5in was too cramped (oversized fonts, truncated y-label, colliding
+    # x-labels); stacking gives each panel full column width.
+    fig, axes = plt.subplots(3, 1, figsize=(SINGLE_COL, 4.6))
+    fig.subplots_adjust(hspace=0.45)
     panels = [
         ("IF contamination", "IF contamination", "(a)"),
         ("LOF n_neighbors", "LOF n_neighbors", "(b)"),
         ("DPR weight", "DPR weight", "(c)"),
     ]
+    # Tag corner verified against each curve's shape (values checked from
+    # sensitivity_results.csv, not guessed):
+    #  (a) IF contamination is flat at Jaccard=1.0 -- the curve hugs the top,
+    #      so the lower-left is empty; placed above the "baseline" annotation
+    #      that sits at the very bottom near x=0.02.
+    #  (b) LOF (edges 0.14 / 0.08) and (c) DPR (edges 0.54 / 0.67) both peak
+    #      at their centred baseline and fall off toward the edges, leaving
+    #      the top-left corner well clear of the curve.
+    tag_pos = {
+        "(a)": (0.04, 0.28, "left", "bottom"),
+        "(b)": (0.04, 0.94, "left", "top"),
+        "(c)": (0.04, 0.94, "left", "top"),
+    }
     for (sweep_name, xlabel, tag), ax in zip(panels, axes):
         sub = sens[sens["sweep"] == sweep_name].sort_values("value")
         if not len(sub):
@@ -326,20 +342,13 @@ def fig4_sensitivity(sens: pd.DataFrame) -> None:
                        ha="center", va="bottom")
         ax.set_xlabel(xlabel)
         ax.set_ylim(0, 1.05)
+        ax.set_yticks([0, 0.5, 1.0])
 
-    axes[0].set_ylabel("Jaccard similarity (top-20 vs. baseline)")
+        x, y, ha, va = tag_pos[tag]
+        ax.text(x, y, tag, transform=ax.transAxes, fontsize=8, fontweight="bold",
+               ha=ha, va=va)
 
-    # Panel tags below each panel, centered under its x-axis label. A fixed
-    # axes-fraction offset doesn't reliably clear the xlabel across figure
-    # sizes, so measure each axes' actual rendered extent (tick labels +
-    # xlabel included) via get_tightbbox and place the tag a small, fixed
-    # gap below that -- in figure-fraction coordinates, not axes-fraction.
-    renderer = fig._get_renderer()
-    for (_, _, tag), ax in zip(panels, axes):
-        bbox_fig = ax.get_tightbbox(renderer).transformed(fig.transFigure.inverted())
-        x_center = sum(ax.get_position().intervalx) / 2
-        fig.text(x_center, bbox_fig.y0 - 0.03, tag, fontsize=8,
-                 fontweight="bold", ha="center", va="top")
+    fig.supylabel("Jaccard similarity (top-20 vs. baseline)", fontsize=8)
 
     out = OUT_DIR / "fig4_sensitivity.pdf"
     fig.savefig(out)
