@@ -1,7 +1,7 @@
 """
 src/scoring.py
 ══════════════════════════════════════════════════════════════════════════════
-Anomaly Detection & Risk Scoring — Aadhaar Sentinel V2.1
+Anomaly Detection & Risk Scoring — Aadhaar Sentinel V2.2
 
 V2 CHANGES (from V1):
   1. add_population_uncertainty — FIXED double-counting bug.

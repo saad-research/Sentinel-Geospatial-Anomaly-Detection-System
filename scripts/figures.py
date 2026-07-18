@@ -8,14 +8,12 @@ Read-only w.r.t. the pipeline: does not import or modify anything in src/,
 does not touch config.py, does not rerun pipeline.py. Reads existing
 data/processed/*.csv and writes only outputs/figures/*.pdf.
 
-DATA-QUALITY FLAG (found while building this script, not assumed):
-  CLAUDE.md and the original figure spec both name "PINcode 400003,
-  AHMADNAGAR" as the DPR=193 headline anomaly. data/processed/sentinel_final.csv
-  has exactly one row with DPR == 193.0, and it is PINcode 414001 (AHMADNAGAR,
-  MAHARASHTRA) -- pincode 400003 exists (4 rows, spanning AHMADNAGAR AND
-  MUMBAI districts) but tops out at DPR=1.13. This script annotates the
-  empirically-verified row (414001). Flagged to the user; the "400003" claim
-  in CLAUDE.md may be stale and worth checking before it goes into the paper.
+DATA-QUALITY NOTE (found while building this script; since resolved):
+  The original figure spec named "PINcode 400003, AHMADNAGAR" as the DPR=193
+  headline anomaly. sentinel_final.csv has exactly one row with DPR == 193.0,
+  and it is PINcode 414001 (AHMADNAGAR, MAHARASHTRA) -- 400003 tops out at
+  DPR=1.13. This script annotates the verified row (414001); project docs
+  have been corrected accordingly.
 
 ROW IDENTITY: pincode is not unique (spans districts). Verified while
 building this: (pincode, district, state) is ALSO not unique in this dataset
@@ -29,15 +27,11 @@ files by key. fig3 additionally verifies its recomputed Statistical mask
 against outliers_stat.csv by exact multiset comparison of value tuples (not
 a key-based join) -- see verify_statistical_mask().
 
-Stat-IF OVERLAP DISCREPANCY: pipeline.py's own console summary computes
-"Stat-IF overlap" via PINCODE-SET intersection
-(set(outliers_stat.pincode) & set(if_outliers.pincode)) = 656/658. That
-undercounts because it dedupes by pincode alone -- exactly the trap this
-task's spec warns against. This script's row-level computation (fig3) finds
-Stat∩IF = 658/658: every single IF-flagged ROW is also statistically
-flagged. IF∩LOF = 54 matches the documented baseline under both methods,
-because scoring.py's own overlap stat already uses the pandas row index, not
-pincode. Both numbers are printed for cross-reference.
+Stat-IF OVERLAP: row-level computation (fig3) finds Stat∩IF = 658/658 --
+every IF-flagged ROW is also statistically flagged. (A historical pincode-set
+dedup in pipeline.py once reported 656; fixed in V2.2, both now agree.)
+IF∩LOF = 54 matches the documented baseline; scoring.py's overlap stat uses
+the pandas row index, not pincode, so it was never affected.
 
 Run:
     python scripts/figures.py   (run pipeline.py first; needs data/processed/*)
@@ -214,9 +208,8 @@ def fig3_flag_overlap(sf: pd.DataFrame, stat_csv: pd.DataFrame) -> None:
     print(f"Set sizes: Statistical={int(stat.sum())} (expect 1918), "
           f"IF={int(if_.sum())} (658), LOF={int(lof.sum())} (623)")
     print("7 exclusive regions:", regions)
-    print(f"Pairwise totals -- Stat∩IF: {int((stat & if_).sum())} "
-          f"(row-level; NOTE pipeline.py's own console stat reports 656 via "
-          f"pincode-set dedup, see module docstring) | "
+    print(f"Pairwise totals -- Stat∩IF: {int((stat & if_).sum())} (row-level, "
+          f"matches pipeline.py) | "
           f"IF∩LOF: {int((if_ & lof).sum())} (expect 54) | "
           f"Stat∩LOF: {int((stat & lof).sum())}")
 

@@ -310,8 +310,7 @@ def print_section6(crosstab: pd.DataFrame, purity_df: pd.DataFrame) -> None:
     unweighted_purity = purity_df["purity"].mean()
     total = purity_df["size"].sum()
     weighted_purity = (purity_df["purity"] * purity_df["size"]).sum() / total
-    weighted_noise_share = (purity_df["n_hdbscan_noise"] * purity_df["size"]).sum() / (total ** 2) \
-        if False else (purity_df["n_hdbscan_noise"].sum() / total)
+    weighted_noise_share = purity_df["n_hdbscan_noise"].sum() / total
 
     if weighted_purity >= 0.8:
         interp = "DBSCAN clusters mostly nest inside single HDBSCAN clusters (hierarchy)."

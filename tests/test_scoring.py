@@ -1,7 +1,7 @@
 """
 tests/test_scoring.py
 ══════════════════════════════════════════════════════════════════════════════
-Tests for src/scoring.py Method 3 (LOF) and Stage 2a (HDBSCAN) -- V2.1
+Tests for src/scoring.py Method 3 (LOF) and Stage 2a (HDBSCAN) -- V2.2
 additions previously untested (see CLAUDE.md "Known open gaps" #3).
 """
 

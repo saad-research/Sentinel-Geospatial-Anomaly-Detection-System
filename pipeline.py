@@ -1,7 +1,7 @@
 """
 pipeline.py
 ══════════════════════════════════════════════════════════════════════════════
-End-to-End Pipeline Runner — Aadhaar Sentinel V2.1
+End-to-End Pipeline Runner — Aadhaar Sentinel V2.2
 
 Single entry point. Run with:
     python pipeline.py

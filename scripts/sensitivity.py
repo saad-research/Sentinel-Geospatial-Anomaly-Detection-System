@@ -1,6 +1,6 @@
 """
 scripts/sensitivity.py
-Sensitivity Analysis -- Aadhaar Sentinel V2.1 -- Paper B §4 + §5
+Sensitivity Analysis -- Aadhaar Sentinel V2.2 -- Paper B §4 + §5
 
 SWEEPS:
   1. IF contamination:  0.01, 0.02 (baseline), 0.03, 0.05, 0.07, 0.10

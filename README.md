@@ -175,7 +175,7 @@ DPR weighted highest: integrity anomalies are hardest to detect and highest audi
 | PINCODEs analysed                 | 32,898       |
 | Statistical flags (98th pct)      | 1,918        |
 | Isolation Forest flags            | 658          |
-| Statistical–IF overlap            | 656 (100%)   |
+| Statistical–IF overlap            | 658 (100%)   |
 | LOF flags                         | 623          |
 | IF∩LOF overlap                    | 54 (8%)      |
 | HDBSCAN clusters (primary)        | 33           |
