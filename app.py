@@ -1,7 +1,17 @@
 """
-app.py — Aadhaar Sentinel V2 Dashboard
+app.py — Aadhaar Sentinel V2.2 Dashboard
 ══════════════════════════════════════════════════════════════════════════════
 Run: streamlit run app.py
+
+V2.2 CHANGES:
+  - LOF (Method 3) surfaced alongside IF: flags, scores, KPI, agreement table.
+  - HDBSCAN (primary Stage 2) cluster table with membership probability and
+    computed behavioural regimes (dominant z-scored feature per cluster —
+    never hardcoded); DBSCAN retained as ablation baseline.
+  - Detector agreement structure (Stat/IF/LOF + overlaps) computed live,
+    row-level (pincode is NOT unique — no pincode-set dedup).
+  - growth_source provenance filter in sidebar.
+  - Methodology tab rewritten for the V2.2 three-detector ensemble.
 
 V2 CHANGES:
   - Plotly charts throughout (replacing st.bar_chart and matplotlib).
@@ -86,11 +96,53 @@ HAS_V2 = "DPR_v2" in sentinel_df.columns
 HAS_ISO = "iso_score" in sentinel_df.columns
 HAS_MASKED = "Privacy_Masked" in sentinel_df.columns
 HAS_GROWTH = "growth_source" in sentinel_df.columns
+HAS_LOF = "lof_flag" in sentinel_df.columns
+HAS_HDBSCAN = ensemble_df is not None and "hdbscan_cluster" in ensemble_df.columns
+
+
+# ── Behavioural regimes (V2.2) ────────────────────────────────────────────────
+# Regime per HDBSCAN cluster = the feature (DPR/PNA/TAI) with the highest
+# POSITIVE mean z-score within the IF-flagged population — computed from the
+# data, never hardcoded. Clusters with no elevated feature (all mean z ≤ 0,
+# i.e. near the IF-flagged centroid) are labelled Mixed.
+REGIME_NAME = {
+    "TAI": "High-TAI metro",
+    "PNA": "High-PNA capacity",
+    "DPR": "High-DPR integrity",
+}
+
+@st.cache_data
+def compute_cluster_regimes(ens: pd.DataFrame) -> pd.DataFrame:
+    """One row per HDBSCAN cluster: size, regime, median probability, top state."""
+    feats = ["DPR", "PNA", "TAI"]
+    d = ens[ens["hdbscan_cluster"] >= 0].copy()
+    for f in feats:
+        col = ens[f].fillna(0)
+        d[f + "_z"] = (d[f].fillna(0) - col.mean()) / col.std(ddof=0)
+
+    rows = []
+    for cid, g in d.groupby("hdbscan_cluster"):
+        z_means = {f: g[f + "_z"].mean() for f in feats}
+        top_feat = max(z_means, key=z_means.get)
+        regime = REGIME_NAME[top_feat] if z_means[top_feat] > 0 else "Mixed (near centroid)"
+        top_state = g["state"].value_counts()
+        rows.append({
+            "Cluster": int(cid),
+            "PINcodes": len(g),
+            "Regime": regime,
+            "Median DPR": round(g["DPR"].median(), 2),
+            "Median PNA": round(g["PNA"].median(), 3),
+            "Median TAI": round(g["TAI"].median(), 0),
+            "Median membership prob.": round(g["hdbscan_probability"].median(), 2)
+                if "hdbscan_probability" in g.columns else None,
+            "Top state": f"{top_state.index[0]} ({top_state.iloc[0]}/{len(g)})",
+        })
+    return pd.DataFrame(rows).sort_values("PINcodes", ascending=False)
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
     st.title("🛡️ Aadhaar Sentinel")
-    st.caption("Geospatial Risk Analytics · V2" if HAS_V2 else "Geospatial Risk Analytics · V1")
+    st.caption("Geospatial Risk Analytics · V2.2" if HAS_V2 else "Geospatial Risk Analytics · V1")
     st.divider()
 
     st.subheader("Filters")
@@ -104,6 +156,13 @@ with st.sidebar:
     )
     districts = ["All"] + sorted(district_pool["district"].dropna().unique().tolist())
     selected_district = st.selectbox("District", districts)
+
+    # V2.2: population-denominator provenance filter
+    if HAS_GROWTH:
+        growth_sources = ["All"] + sorted(sentinel_df["growth_source"].dropna().unique().tolist())
+        selected_growth = st.selectbox("Growth source (provenance)", growth_sources)
+    else:
+        selected_growth = "All"
 
     st.divider()
 
@@ -130,6 +189,8 @@ if selected_state != "All":
     filtered_df = filtered_df[filtered_df["state"] == selected_state]
 if selected_district != "All":
     filtered_df = filtered_df[filtered_df["district"] == selected_district]
+if selected_growth != "All":
+    filtered_df = filtered_df[filtered_df["growth_source"] == selected_growth]
 
 # Global thresholds — always from FULL dataset, not filtered
 pna_thresh = sentinel_df["PNA"].quantile(OUTLIER_PERCENTILE)
@@ -159,15 +220,17 @@ tab_overview, tab_capacity, tab_integrity, tab_risk, tab_method = st.tabs([
 # ══════════════════════════════════════════════════════════════════════════════
 with tab_overview:
     # ── KPI row ───────────────────────────────────────────────────────────
-    kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
-    kpi1.metric("PINcodes (Filtered)", f"{len(filtered_df):,}")
-    kpi2.metric("Total Activity (TAI)", f"{int(filtered_df['TAI'].sum()):,}")
-    kpi3.metric("ML Anomalies (National)", f"{len(outliers_df):,}")
-    kpi4.metric(
+    kpi_cols = st.columns(6 if HAS_LOF else 5)
+    kpi_cols[0].metric("PINcodes (Filtered)", f"{len(filtered_df):,}")
+    kpi_cols[1].metric("Total Activity (TAI)", f"{int(filtered_df['TAI'].sum()):,}")
+    kpi_cols[2].metric("IF Flags (National)", f"{len(outliers_df):,}")
+    if HAS_LOF:
+        kpi_cols[3].metric("LOF Flags (National)", f"{int(sentinel_df['lof_flag'].sum()):,}")
+    kpi_cols[-2].metric(
         "High-DPR PINcodes",
         int(filtered_df[filtered_df["DPR"] >= dpr_thresh].shape[0]),
     )
-    kpi5.metric(
+    kpi_cols[-1].metric(
         "High-PNA PINcodes",
         int(filtered_df[filtered_df["PNA"] >= pna_thresh].shape[0]),
     )
@@ -193,6 +256,10 @@ with tab_overview:
     hover_cols = ["pincode", "district", "state", "TAI", "DPR", "PNA"]
     if HAS_V2:
         hover_cols.append("DPR_v2")
+    if HAS_ISO:
+        hover_cols.append("iso_score")
+    if HAS_LOF:
+        hover_cols += ["lof_flag", "lof_score"]
 
     scatter_fig = px.scatter(
         plot_df_sample,
@@ -227,6 +294,10 @@ with tab_overview:
     top5_cols = ["pincode", "district", "state", "DPR", "PNA", "TAI", "audit_priority_score"]
     if HAS_V2:
         top5_cols.insert(4, "DPR_v2")
+    if HAS_ISO:
+        top5_cols.append("iso_score")
+    if HAS_LOF:
+        top5_cols += ["lof_flag", "lof_score"]
     top5 = filtered_df.nlargest(5, "audit_priority_score")[
         [c for c in top5_cols if c in filtered_df.columns]
     ]
@@ -414,67 +485,104 @@ with tab_risk:
             st.info("No anomalies in current filter selection.")
 
     with col_table:
-        st.subheader("Detection Method Comparison")
-        stat_count = len(
-            sentinel_df[
-                (sentinel_df["TAI"] >= sentinel_df["TAI"].quantile(OUTLIER_PERCENTILE))
-                | (sentinel_df["DPR"] >= dpr_thresh)
-                | (sentinel_df["PNA"] >= pna_thresh)
-            ]
+        st.subheader("Detector Agreement (V2.2 Ensemble)")
+        st.caption(
+            "Row-level boolean masks on the full dataset — pincode is not a "
+            "unique key, so overlaps are never computed via pincode sets. "
+            "All counts computed live from the loaded CSVs."
         )
-        ml_count = len(outliers_df)
-
-        if "pincode" in outliers_df.columns:
-            stat_pins = set(
-                sentinel_df[
-                    (sentinel_df["TAI"] >= sentinel_df["TAI"].quantile(OUTLIER_PERCENTILE))
-                    | (sentinel_df["DPR"] >= dpr_thresh)
-                    | (sentinel_df["PNA"] >= pna_thresh)
-                ]["pincode"].astype(str)
-            )
-            ml_pins = set(outliers_df["pincode"].astype(str))
-            overlap = len(stat_pins & ml_pins)
-            overlap_pct = f"{overlap / ml_count * 100:.0f}%" if ml_count > 0 else "N/A"
+        # Recompute all three detector masks row-level on sentinel_df.
+        stat_mask = (
+            (sentinel_df["TAI"] >= sentinel_df["TAI"].quantile(OUTLIER_PERCENTILE))
+            | (sentinel_df["DPR"] >= dpr_thresh)
+            | (sentinel_df["PNA"] >= pna_thresh)
+        )
+        if_mask = (
+            sentinel_df["anomaly_score"] == -1
+            if "anomaly_score" in sentinel_df.columns
+            else pd.Series(False, index=sentinel_df.index)
+        )
+        rows = [
+            ("Statistical (98th pct union)", int(stat_mask.sum())),
+            ("Isolation Forest (Method 2)", int(if_mask.sum())),
+        ]
+        if HAS_LOF:
+            lof_mask = sentinel_df["lof_flag"].astype(bool)
+            rows += [
+                ("LOF (Method 3)", int(lof_mask.sum())),
+                ("Stat ∩ IF", int((stat_mask & if_mask).sum())),
+                ("IF ∩ LOF (high-confidence)", int((if_mask & lof_mask).sum())),
+                ("Stat ∩ LOF", int((stat_mask & lof_mask).sum())),
+                ("All three", int((stat_mask & if_mask & lof_mask).sum())),
+            ]
         else:
-            overlap, overlap_pct = "N/A", "N/A"
+            rows.append(("Stat ∩ IF", int((stat_mask & if_mask).sum())))
 
-        comparison_data = pd.DataFrame({
-            "Method": ["Statistical (98th pct)", "Isolation Forest (ML)", "Overlap (high-confidence)"],
-            "Count": [f"{stat_count:,}", f"{ml_count:,}", f"{overlap} ({overlap_pct})"],
-        })
-        st.dataframe(comparison_data, use_container_width=True, hide_index=True)
+        agreement = pd.DataFrame(rows, columns=["Detector / overlap", "PINcode rows"])
+        agreement["PINcode rows"] = agreement["PINcode rows"].map("{:,}".format)
+        st.dataframe(agreement, use_container_width=True, hide_index=True)
 
-        # V2: DBSCAN cluster breakdown
-        if ensemble_df is not None and "dbscan_cluster" in ensemble_df.columns:
-            st.divider()
-            st.subheader("DBSCAN Cluster Analysis")
+    # V2.2: HDBSCAN primary clustering with behavioural regimes
+    if HAS_HDBSCAN:
+        st.divider()
+        st.subheader("HDBSCAN Cluster Structure (Primary, Stage 2)")
+        st.caption(
+            "Clusters within the IF-flagged subset. Regime = the feature with "
+            "the highest positive mean z-score in the cluster, computed from "
+            "the data. Membership probability is HDBSCAN's soft assignment."
+        )
 
-            n_clusters = len(set(ensemble_df["dbscan_cluster"].unique()) - {-1})
-            n_clustered = int(ensemble_df["dbscan_is_clustered"].sum())
-            n_noise = int((ensemble_df["dbscan_cluster"] == -1).sum())
+        n_clusters = len(set(ensemble_df["hdbscan_cluster"].unique()) - {-1})
+        n_clustered = int((ensemble_df["hdbscan_cluster"] >= 0).sum())
+        n_noise = int((ensemble_df["hdbscan_cluster"] == -1).sum())
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Clusters Found", n_clusters)
-            c2.metric("Clustered PINcodes", n_clustered)
-            c3.metric("Isolated Outliers", n_noise)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Clusters Found", n_clusters)
+        c2.metric("Clustered PINcodes", n_clustered)
+        c3.metric("Isolated Outliers", n_noise)
 
-            if n_clusters > 0:
-                cluster_sizes = (
-                    ensemble_df[ensemble_df["dbscan_is_clustered"]]
-                    .groupby("dbscan_cluster")["pincode"]
-                    .count()
-                    .reset_index()
+        if n_clusters > 0:
+            regimes = compute_cluster_regimes(ensemble_df)
+            regime_counts = regimes.groupby("Regime")["PINcodes"].agg(["count", "sum"])
+            st.caption(
+                "Regime composition: " + " · ".join(
+                    f"{reg}: {int(r['count'])} clusters ({int(r['sum'])} PINcodes)"
+                    for reg, r in regime_counts.iterrows()
                 )
-                cluster_sizes.columns = ["Cluster ID", "PINcodes"]
-                cluster_sizes = cluster_sizes.merge(
-                    ensemble_df[ensemble_df["dbscan_is_clustered"]]
-                    .groupby("dbscan_cluster")["state"]
-                    .agg(lambda x: x.value_counts().index[0])
-                    .reset_index()
-                    .rename(columns={"state": "Dominant State", "dbscan_cluster": "Cluster ID"}),
-                    on="Cluster ID",
-                )
-                st.dataframe(cluster_sizes, use_container_width=True, hide_index=True)
+            )
+            st.dataframe(regimes, use_container_width=True, hide_index=True)
+
+    # V2: DBSCAN cluster breakdown (retained as ablation baseline)
+    if ensemble_df is not None and "dbscan_cluster" in ensemble_df.columns:
+        st.divider()
+        st.subheader("DBSCAN Cluster Analysis (Ablation Baseline)")
+
+        n_clusters = len(set(ensemble_df["dbscan_cluster"].unique()) - {-1})
+        n_clustered = int(ensemble_df["dbscan_is_clustered"].sum())
+        n_noise = int((ensemble_df["dbscan_cluster"] == -1).sum())
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Clusters Found", n_clusters)
+        c2.metric("Clustered PINcodes", n_clustered)
+        c3.metric("Isolated Outliers", n_noise)
+
+        if n_clusters > 0:
+            cluster_sizes = (
+                ensemble_df[ensemble_df["dbscan_is_clustered"]]
+                .groupby("dbscan_cluster")["pincode"]
+                .count()
+                .reset_index()
+            )
+            cluster_sizes.columns = ["Cluster ID", "PINcodes"]
+            cluster_sizes = cluster_sizes.merge(
+                ensemble_df[ensemble_df["dbscan_is_clustered"]]
+                .groupby("dbscan_cluster")["state"]
+                .agg(lambda x: x.value_counts().index[0])
+                .reset_index()
+                .rename(columns={"state": "Dominant State", "dbscan_cluster": "Cluster ID"}),
+                on="Cluster ID",
+            )
+            st.dataframe(cluster_sizes, use_container_width=True, hide_index=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -530,18 +638,47 @@ P_i = District_Projected_Population ÷ active PINcodes in district.
 
 ---
 
-### Anomaly Detection
+### Anomaly Detection (V2.2 Three-Method Ensemble)
 
 **Method 1 — Statistical Baseline**
 PINcodes in the top 2% on any of TAI, DPR, or PNA (union of 98th percentiles).
+Univariate; cannot capture multivariate structure — the motivation for
+Methods 2 and 3.
 
-**Method 2 — Isolation Forest (Stage 1)**
+**Method 2 — Isolation Forest (Stage 1a)**
 `IsolationForest(n_estimators=200, contamination=0.02, random_state=42)`
-on joint (TAI, DPR, PNA) feature space. Identifies multivariate anomalies.
-iso_score retained for continuous ranking within flagged set.
+on joint (TAI, DPR, PNA) feature space. Detects globally isolated
+multivariate anomalies. `iso_score` (decision function; negative = anomaly)
+retained on every row for continuous ranking.
 
-{'**Method 3 — DBSCAN Clustering (Stage 2, V2)**  ' if HAS_V2 else ''}
-{'`DBSCAN(eps=0.5, min_samples=3)` in StandardScaler-normalized feature space applied to the IsolationForest-flagged subset. Clustered points (dbscan_cluster ≥ 0) represent coordinated multi-PINCODE anomaly patterns — stronger evidence than isolated outliers.' if HAS_V2 else ''}
+**Method 3 — Local Outlier Factor (Stage 1b)**
+`LocalOutlierFactor(n_neighbors=20, contamination=0.02, novelty=True)` on the
+same feature space. Detects locally anomalous points — low density relative
+to their neighbourhood rather than globally. IF and LOF are complementary
+(their top-20 lists are fully disjoint); the IF ∩ LOF intersection is the
+high-confidence anomaly set. `lof_score` mirrors `iso_score` conventions.
+
+**Stage 2 — Cluster Structure on the IF-Flagged Subset**
+Primary: `HDBSCAN(min_cluster_size=5, min_samples=3)` in
+StandardScaler-normalized space — adapts to India's variable urban/rural
+density and provides soft membership probability per point.
+Ablation baseline: `DBSCAN(eps=0.5, min_samples=3)` on the same input; its
+single fixed ε collapses distinct behavioural regimes that HDBSCAN separates.
+
+**Fitting protocol (both IF and LOF):** models are fit only on
+non-Privacy_Masked rows (sparse proxy-PNA values would distort the anomaly
+boundary), but ALL rows are scored — no PINCODE disappears from the audit.
+
+---
+
+### Sensitivity (Paper B §5)
+
+- IF contamination swept over 0.01–0.10: top-20 audit list fully stable
+  (Jaccard 1.0 across all configurations).
+- LOF n_neighbors swept over 10–50: sensitive (Jaccard 0.08–1.0) — a known
+  property of LOF, disclosed as a limitation.
+- DPR weight swept over 0.40–0.60: composite ranking shifts moderately
+  (Jaccard 0.54–0.74); the flag set itself is robust.
 
 ---
 
@@ -569,12 +706,12 @@ Z-score normalised. Weights in config.py. Shifted to ≥ 0 for readability.
 
 All analysis uses aggregated PINCODE or district-level data only.
 No Aadhaar numbers, biometric templates, or individual records are processed.
-{'k-Anonymity: districts with Projected_2026 < 500 are flagged and excluded from the public IndiaID-Bench dataset (Paper A §4).' if HAS_V2 else ''}
+{'k-Anonymity: districts with Projected_2026 < 500 are flagged (Privacy_Masked), excluded from IF/LOF model fitting but still scored, and masked before the public IndiaID-Bench release (Paper A §4). In this dashboard they remain visible, marked by the sidebar counter.' if HAS_V2 else ''}
 """)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 st.divider()
 st.caption(
-    "Aadhaar Sentinel V2 · Geospatial Risk Analytics for National Identity Infrastructure"
+    "Aadhaar Sentinel V2.2 · Geospatial Risk Analytics for National Identity Infrastructure"
     + (" · RGI-Projected Population" if HAS_V2 else " · Census 2011 Population")
 )
