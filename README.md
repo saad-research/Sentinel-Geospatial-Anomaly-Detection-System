@@ -311,7 +311,11 @@ Population estimation uses Census of India 2011 district statistics projected to
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+- **Code** (this repository): [MIT License](LICENSE).
+- **IndiaID-Bench dataset** (Zenodo release): [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+- **Upstream data**: UIDAI datasets are published on data.gov.in under the
+  [Government Open Data License – India (GODL)](https://data.gov.in/government-open-data-license-india);
+  attribution to UIDAI/data.gov.in is required, and UIDAI does not endorse this work.
 
 ---
 
