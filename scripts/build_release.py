@@ -56,7 +56,7 @@ RELEASE_CSV = OUT_DIR / "indiaid_bench_v1.0.0.csv"
 DISTRICT_MAP_OUT = OUT_DIR / "district_name_map_v1.0.0.csv"
 CHECKSUMS_OUT = OUT_DIR / "checksums.txt"
 
-# Target schema, in release column order. Explicitly excludes: Privacy_Masked
+# Target schema, in release column order.
 # (constant/False after suppression -- carries no information), DPR_v2,
 # anomaly_score (superseded by if_flag), detection_method.
 RELEASE_COLUMNS = [
@@ -68,6 +68,7 @@ RELEASE_COLUMNS = [
     "dpr_z", "pna_z", "activity_z", "audit_priority_score",
     "if_flag", "iso_score", "lof_flag", "lof_score",
     "hdbscan_cluster", "hdbscan_probability", "dbscan_cluster",
+    "Privacy_Masked"
 ]
 
 
