@@ -5,7 +5,7 @@ and update statistics, joined to Census 2011 district populations projected
 to 2026 via official RGI growth rates, with derived integrity/capacity
 metrics and unsupervised anomaly-detection outputs.
 
-**Author:** Mohammed Saad Shareef (ORCID: [your ORCID]) · Independent Researcher, Hyderabad, India
+**Author:** Mohammed Saad Shareef (ORCID: 0009-0004-1341-3557) · Independent Researcher, Hyderabad, India
 **Version:** 1.0.0 · **License (this dataset):** CC BY 4.0
 **Code:** https://github.com/saad-research/aadhaar-sentinel (MIT)
 **Companion paper:** "Aadhaar-Sentinel: Dual-Metric Anomaly Detection for
